@@ -65,40 +65,116 @@ create table trade (
 		on update cascade
 		on delete restrict,
 
-	trade_amount double not null,
+	trade_amount_start double not null,
+	trade_amount double not null default 0,
 	trade_ratio double not null,
 
 	trade_created_date datetime not null,
 	trade_completed_date datetime
-	# null completed date znaci nije completed
 );
 
+/*
+	Tabela koja cuva sve izvrsene transakcije odnosno promene stanja wallet-a
+*/
+create table transactions (
+	transaction_id int primary key not null auto_increment,
+
+	wallet_id int not null,
+	transaction_delta double not null,
+
+	trade_id_home int,
+	trade_id_away int,
+
+	foreign key (wallet_id)
+		references wallet(wallet_id)
+		on update cascade
+		on delete restrict
+
+	/* nije strani kljuc zbog nesrecnog dizajna mehanizma trigera */
+
+	/*
+
+	foreign key (trade_id_home)
+		references trade(trade_id)
+		on update cascade
+		on delete restrict,
+
+	foreign key (trade_id_away)
+		references trade(trade_id)
+		on update cascade
+		on delete restrict
+
+	*/
+);
+
+/* password hasher */
 delimiter //
-create function get_base_currency(trade_id int)
+create function pwhash(x text)
+returns varchar(64)
+begin
+	return sha2(x, 256);
+end //
+delimiter ;
+
+delimiter //
+create function get_currency_from(trade_id int)
 returns varchar(3)
 begin
-	return (select currency_code from wallet, trade
-		where wallet.wallet_id = trade.wallet_id);
+	return (select min(currency_code) from wallet, trade
+		where wallet.wallet_id = trade.wallet_id_from);
+end //
+delimiter ;
+
+delimiter //
+create function get_currency_to(trade_id int)
+returns varchar(3)
+begin
+	return (select min(currency_code) from wallet, trade
+		where wallet.wallet_id = trade.wallet_id_to);
 end //
 delimiter ;
 
 /* procedura za kreditovanje wallet-a */
 delimiter //
-create procedure credit_wallet(w_id int, delta double)
+create procedure credit_wallet(
+	w_id int, delta double, t_id_home int, t_id_away int)
 begin
-	update wallet set amount = amount + delta
+	update wallet set wallet_amount = wallet_amount + delta
 		where wallet_id = w_id;
+
+	/* insert u tabelu izvrsenih transakcija */
+	insert into transactions(wallet_id, transaction_delta, trade_id_home, trade_id_away)
+		values (w_id, delta, t_id_home, t_id_away);
+end //
+delimiter ;
+
+/* trigger koji proverava trade koji treba da se ubaci */
+delimiter //
+create trigger trade_insert_trigger
+before insert on trade
+for each row
+begin
+
+	declare w_avail double;
+
+	set w_avail = (select wallet_amount from wallet where wallet_id = new.wallet_id_from);
+
+	set new.trade_amount = new.trade_amount_start;
+
+	if new.trade_amount > w_avail
+	then
+		set new.trade_amount = w_avail;
+	end if;
+
+	call credit_wallet(new.wallet_id_from, -w_avail, new.trade_id, null);
+
 end //
 delimiter ;
 
 delimiter //
-create trigger trade_trigger
-after insert on trade
-for each row
+create procedure trade_matcher(in new_trade_id int)
 begin
 	declare break_condition int;
-	
-	declare base_currency varchar(3);
 
 	declare this_ratio double;
 	declare that_ratio double;
@@ -107,61 +183,144 @@ begin
 
 	declare mean_ratio double;
 
-	declare that_wallet int;
+	declare that_wallet_from int;
+	declare that_wallet_to int;
+
+	declare rows int;
+	declare row_id int;
+
+	declare new_trade_ratio double;
+	declare new_trade_amount double;
+	declare new_wallet_id_from int;
+	declare new_wallet_id_to int;
+
+	set new_trade_ratio = (select trade_ratio from trade where trade_id = new_trade_id);
+	set new_trade_amount = (select trade_amount from trade where trade_id = new_trade_id);
+	set new_wallet_id_from = (select wallet_id_from from trade where trade_id = new_trade_id);
+	set new_wallet_id_to = (select wallet_id_to from trade where trade_id = new_trade_id);
 
 	set break_condition = 0;
-	set base_currency = get_base_currency(new.trade_id);
 
-	# pronadji najbolji offer sa druge strane, ako postoji
-	set @rows = (select count(*) from trade where
-		trade_currency_code = @base_currency
-		and
-		get_base_currency(trade_id)
-			= new.trade_currency_code
-		and
-		trade_completed_date is null
-	);
-
-	if @rows > 0
-	then
-		set @row_id = 
-		(
-			select min(trade_id) from trade where
-				trade_currency_code = @base_currency
-				and
-				get_base_currency(trade_id)
-					= new.trade_currency_code
-				and
-				trade_completed_date is null
-			order by 
-				trade_ratio desc,
-				trade_created_date asc
+	while break_condition = 0
+	do
+		# pronadji najbolji offer sa druge strane, ako postoji
+		set rows = (select count(*) from trade as t1 where
+			get_currency_from(trade_id) = get_currency_to(new_trade_id)
+			and
+			get_currency_to(trade_id) = get_currency_from(new_trade_id)
+			and
+			trade_completed_date is null
 		);
 
-		
-
-		set this_ratio = new.trade_ratio;
-		set that_ratio = (select trade_ratio
-			from trade where trade_id = @row_id);
-
-		set this_amount = new.trade_amount;
-		set that_amount = (select trade_amount
-			from trade where trade_id = @row_id);
-
-		set mean_ratio = sqrt(this_ratio * that_ratio);
-
-		# ukoliko mogu da se upare, upari ih
-		if this_ratio * that_ratio >= 1.0
+		if rows > 0
 		then
-			if this_amount > that_amount
+			set row_id = 
+			(
+				select min(trade_id) from trade where
+					get_currency_from(trade_id) = get_currency_to(new_trade_id)
+					and
+					get_currency_to(trade_id) = get_currency_from(new_trade_id)
+					and
+					trade_completed_date is null
+				order by
+					trade_ratio desc,
+					trade_created_date asc
+			);
+
+			set this_ratio = new_trade_ratio;
+			set that_ratio = (select trade_ratio
+				from trade where trade_id = row_id);
+
+			set this_amount = new_trade_amount;
+			set that_amount = (select trade_amount
+				from trade where trade_id = row_id);
+
+			set mean_ratio = sqrt(this_ratio / that_ratio);
+
+			set that_wallet_from = (select wallet_id_from from trade where trade_id = row_id);
+			set that_wallet_to = (select wallet_id_to from trade where trade_id = row_id);
+
+			# ukoliko mogu da se upare, upari ih
+			if this_ratio * that_ratio >= 1.0
 			then
-				# this prezivljava, nije potpuno sparen
-				credit_wallet(new.wallet_id, that_amount)
+				if (this_amount > that_amount * mean_ratio)
+				then
+					# this prezivljava, nije potpuno sparen
+					# that je completed
+					# call credit_wallet(new_wallet_id_from, -that_amount * mean_ratio, new_trade_id, row_id);
+					call credit_wallet(new_wallet_id_to, that_amount, new_trade_id, row_id);
 
+					# call credit_wallet(that_wallet_from, -that_amount, row_id, new_trade_id);
+					call credit_wallet(that_wallet_to, that_amount * mean_ratio, row_id, new_trade_id);
+
+					update trade set trade_completed_date = now() where trade_id = row_id;
+
+				elseif (this_amount < that_amount * mean_ratio)
+				then
+
+					# call credit_wallet(new_wallet_id_from, -this_amount, new_trade_id, row_id);
+					call credit_wallet(new_wallet_id_to, this_amount / mean_ratio, new_trade_id, row_id);
+
+					# call credit_wallet(that_wallet_from, -this_amount / mean_ratio, row_id, new_trade_id);
+					call credit_wallet(that_wallet_to, this_amount, row_id, new_trade_id);
+
+					update trade set trade_completed_date = now() where trade_id = new_trade_id;
+					set break_condition = 1;
+				else
+
+					# call credit_wallet(new_wallet_id_from, -this_amount, new_trade_id, row_id);
+					call credit_wallet(new_wallet_id_to, this_amount / mean_ratio, new_trade_id, row_id);
+
+					# call credit_wallet(that_wallet_from, -this_amount / mean_ratio, row_id, new_trade_id);
+					call credit_wallet(that_wallet_to, this_amount, row_id, new_trade_id);
+
+					update trade set trade_completed_date = now() where trade_id = new_trade_id;
+					update trade set trade_completed_date = now() where trade_id = row_id;
+					set break_condition = 1;
+
+				end if;
+
+			else
+				set break_condition = 1;
 			end if;
-
+		else
+			set break_condition = 1;
 		end if;
+	end while;
+end //
+delimiter ;
 
-	end if;
+/* Event koji zove proceduru za svaki red */
+delimiter //
+create event trade_event
+on schedule every 5 second
+on completion preserve
+disable
+do begin
+
+	declare done int;
+	declare trade_id int;
+	declare
+		cur cursor
+	for
+		select trade_id from trade order by trade_created_date;
+
+	declare continue handler for not found set done = 1;
+
+	open cur;
+
+	set done = 0;
+
+	mainLoop: loop
+		fetch cur into trade_id;
+		if done = 1
+		then
+			leave mainLoop;
+		end if;
+		call trade_matcher(trade_id);
+	end loop mainLoop;
+
+	close cur;
+
 end //
 delimiter ;
