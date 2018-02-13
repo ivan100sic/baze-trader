@@ -1,4 +1,4 @@
-sudo mysql < clean.sql
-sudo mysql < setup.sql
+sudo mysql --table < clean.sql
+sudo mysql --table < setup.sql
 
-sudo mysql < "test.sql"
+sudo mysql --table < "test.sql"

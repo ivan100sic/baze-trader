@@ -70,7 +70,8 @@ create table trade (
 	trade_ratio double not null,
 
 	trade_created_date datetime not null,
-	trade_completed_date datetime
+	trade_completed_date datetime,
+	trade_cancelled_date datetime
 );
 
 /*
@@ -117,20 +118,22 @@ end //
 delimiter ;
 
 delimiter //
-create function get_currency_from(trade_id int)
+create function get_currency_from(t_id int)
 returns varchar(3)
 begin
 	return (select min(currency_code) from wallet, trade
-		where wallet.wallet_id = trade.wallet_id_from);
+		where wallet.wallet_id = trade.wallet_id_from
+		and trade.trade_id = t_id);
 end //
 delimiter ;
 
 delimiter //
-create function get_currency_to(trade_id int)
+create function get_currency_to(t_id int)
 returns varchar(3)
 begin
 	return (select min(currency_code) from wallet, trade
-		where wallet.wallet_id = trade.wallet_id_to);
+		where wallet.wallet_id = trade.wallet_id_to
+		and trade.trade_id = t_id);
 end //
 delimiter ;
 
@@ -145,6 +148,27 @@ begin
 	/* insert u tabelu izvrsenih transakcija */
 	insert into transactions(wallet_id, transaction_delta, trade_id_home, trade_id_away)
 		values (w_id, delta, t_id_home, t_id_away);
+end //
+delimiter ;
+
+/* procedura za otkazivanje trade-a, refunduj from wallet */
+delimiter //
+create procedure cancel_trade(t_id int)
+begin
+
+	declare w_id int;
+	declare t_am double;
+
+	set w_id = (select wallet_id_from from trade where trade_id = t_id);
+	set t_am = (select trade_amount from trade where trade_id = t_id);
+
+	call credit_wallet(w_id, t_am, t_id, null);
+
+	update trade set
+		trade_amount = 0,
+		trade_cancelled_date = now()
+	where trade_id = t_id;
+
 end //
 delimiter ;
 
@@ -166,7 +190,7 @@ begin
 		set new.trade_amount = w_avail;
 	end if;
 
-	call credit_wallet(new.wallet_id_from, -w_avail, new.trade_id, null);
+	call credit_wallet(new.wallet_id_from, -new.trade_amount, new.trade_id, null);
 
 end //
 delimiter ;
@@ -209,7 +233,7 @@ begin
 			and
 			get_currency_to(trade_id) = get_currency_from(new_trade_id)
 			and
-			trade_completed_date is null
+			trade_amount > 0
 		);
 
 		if rows > 0
@@ -221,7 +245,7 @@ begin
 					and
 					get_currency_to(trade_id) = get_currency_from(new_trade_id)
 					and
-					trade_completed_date is null
+					trade_amount > 0
 				order by
 					trade_ratio desc,
 					trade_created_date asc
@@ -247,37 +271,54 @@ begin
 				then
 					# this prezivljava, nije potpuno sparen
 					# that je completed
-					# call credit_wallet(new_wallet_id_from, -that_amount * mean_ratio, new_trade_id, row_id);
-					call credit_wallet(new_wallet_id_to, that_amount, new_trade_id, row_id);
+					call credit_wallet(new_wallet_id_to, that_amount,
+						new_trade_id, row_id);
 
-					# call credit_wallet(that_wallet_from, -that_amount, row_id, new_trade_id);
-					call credit_wallet(that_wallet_to, that_amount * mean_ratio, row_id, new_trade_id);
+					call credit_wallet(that_wallet_to, that_amount * mean_ratio,
+						row_id, new_trade_id);
 
-					update trade set trade_completed_date = now() where trade_id = row_id;
+					update trade set
+						trade_completed_date = now(),
+						trade_amount = 0.0
+					where trade_id = row_id;
+
+					update trade set
+						trade_amount = trade_amount - that_amount * mean_ratio
+					where trade_id = new_trade_id;
 
 				elseif (this_amount < that_amount * mean_ratio)
 				then
 
-					# call credit_wallet(new_wallet_id_from, -this_amount, new_trade_id, row_id);
-					call credit_wallet(new_wallet_id_to, this_amount / mean_ratio, new_trade_id, row_id);
+					call credit_wallet(new_wallet_id_to, this_amount / mean_ratio,
+						new_trade_id, row_id);
 
-					# call credit_wallet(that_wallet_from, -this_amount / mean_ratio, row_id, new_trade_id);
-					call credit_wallet(that_wallet_to, this_amount, row_id, new_trade_id);
+					call credit_wallet(that_wallet_to, this_amount,
+						row_id, new_trade_id);
 
-					update trade set trade_completed_date = now() where trade_id = new_trade_id;
+					update trade set
+						trade_completed_date = now(),
+						trade_amount = 0.0
+					where trade_id = new_trade_id;
+
+					update trade set
+						trade_amount = trade_amount - this_amount / mean_ratio
+					where trade_id = row_id;
+
 					set break_condition = 1;
 				else
 
-					# call credit_wallet(new_wallet_id_from, -this_amount, new_trade_id, row_id);
-					call credit_wallet(new_wallet_id_to, this_amount / mean_ratio, new_trade_id, row_id);
+					call credit_wallet(new_wallet_id_to, this_amount / mean_ratio,
+						new_trade_id, row_id);
 
-					# call credit_wallet(that_wallet_from, -this_amount / mean_ratio, row_id, new_trade_id);
-					call credit_wallet(that_wallet_to, this_amount, row_id, new_trade_id);
+					call credit_wallet(that_wallet_to, this_amount,
+						row_id, new_trade_id);
 
-					update trade set trade_completed_date = now() where trade_id = new_trade_id;
-					update trade set trade_completed_date = now() where trade_id = row_id;
+					update trade set
+						trade_completed_date = now(),
+						trade_amount = 0.0
+					where trade_id = new_trade_id or trade_id = row_id;
+
 					set break_condition = 1;
-
 				end if;
 
 			else
