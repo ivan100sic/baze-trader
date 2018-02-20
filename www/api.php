@@ -9,10 +9,18 @@ function __get__($id) {
 	return "";
 }
 
-$magic_api_key = "flawle3s3s3s3ecurity";
+$magic_key = "flawle3s3s3s3ecurity";
 
 $type = __get__("type");
 
+/*
+	new_user Kreira novog korisnika i vraca njegov API kljuc
+
+	user_email Email novog korisnika
+	user_password Sifra novog korisnika, koristi se pri dobavljanju API kljuca
+
+	{status, ?api_key}
+*/
 if ($type == "new_user") {
 	$user_email = __get__("user_email");
 	$user_password = __get__("user_password");
@@ -27,7 +35,7 @@ if ($type == "new_user") {
 
 	if ($ok) {
 		$result['status'] = 'ok';
-		$result['api-key'] = $apy_key;
+		$result['api_key'] = $api_key[0]['user_password'];
 	} else {
 		$result['status'] = 'failed';
 	}
@@ -36,6 +44,14 @@ if ($type == "new_user") {
 	exit();
 }
 
+/*
+	get_api_key Vraca API kljuc za datog korisnika
+
+	user_email Email korisnika
+	user_password Sifra korisnika
+
+	{status, ?api_key}
+*/
 if ($type == "get_api_key") {
 	$user_email = __get__("user_email");
 	$user_password = __get__("user_password");
@@ -52,8 +68,6 @@ if ($type == "get_api_key") {
 		$result['status'] = 'no such account';
 	} else if ($api_key[0]['pw'] != $expected_api_key[0]['pw']) {
 		$result['status'] = 'authentication failed';
-		$result['dbg1'] = $api_key[0]['pw'];
-		$result['dbg2'] = $expected_api_key[0]['pw'];
 	} else {
 		$result['status'] = 'ok';
 		$result['api_key'] = $api_key[0]['pw'];
@@ -63,6 +77,13 @@ if ($type == "get_api_key") {
 	exit();
 }
 
+/*
+	get_wallets Vraca sve novcanike za datog korisnika, mora autentikacija
+
+	api_key API kljuc korisnika
+
+	{status, ?[{wallet_id, wallet_name, currency_code, wallet_amount}]}
+*/
 if ($type == "get_wallets") {
 	// auth
 	$api_key = __get__("api_key");
@@ -85,6 +106,11 @@ if ($type == "get_wallets") {
 	exit();
 }
 
+/*
+	get_currencies Vraca sve dostupne valute
+
+	{status, [{currency_code, currency_name}]}
+*/
 if ($type == "get_currencies") {
 	$currencies = SQL::get("select currency_code, currency_name from currency");
 
@@ -93,3 +119,23 @@ if ($type == "get_currencies") {
 	echo json_encode($result);
 	exit();
 }
+
+/*
+	TODO:
+
+	new_wallet
+	update_password
+	get_trades_market
+	get_trades_user
+	get_trades_user_market
+	new_trade
+	cancel_trade
+	get_transactions_user
+
+	SUPER:
+
+	credit_wallet
+	get_users
+	get_trades
+	get_transactions
+*/

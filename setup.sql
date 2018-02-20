@@ -122,7 +122,7 @@ delimiter //
 create function fullhash(x text, y text)
 returns varchar(64)
 begin
-	return pwhash(concat(x, y, 'pof4dsa1pof5aopf23of5kafko31kfda'));
+	return pwhash(concat(x, '@@#', y, 'pof4dsa1pof5aopf23of5kafko31kfda'));
 end //
 delimiter ;
 
