@@ -117,6 +117,15 @@ begin
 end //
 delimiter ;
 
+/* full salted hasher */
+delimiter //
+create function fullhash(x text, y text)
+returns varchar(64)
+begin
+	return pwhash(concat(x, y, 'pof4dsa1pof5aopf23of5kafko31kfda'));
+end //
+delimiter ;
+
 delimiter //
 create function get_currency_from(t_id int)
 returns varchar(3)
@@ -336,7 +345,7 @@ delimiter //
 create event trade_event
 on schedule every 5 second
 on completion preserve
-disable
+enable
 do begin
 
 	declare done int;
@@ -365,3 +374,8 @@ do begin
 
 end //
 delimiter ;
+
+/* Useri i permisije */
+drop user 'trader'@'localhost';
+create user 'trader'@'localhost' identified by '0security';
+grant all privileges on is43bt.* to 'trader'@'localhost';

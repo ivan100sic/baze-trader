@@ -1,9 +1,9 @@
 use is43bt;
 
 insert into user(user_id, user_email, user_password) values
-	(1, 'ivan100sic@gmail.com', pwhash('1234')),
-	(2, 'vukasinsta@gmail.com', pwhash('5678')),
-	(3, 'miljanrist@gmail.com', pwhash('9012'))
+	(1, 'ivan100sic@gmail.com', fullhash('ivan100sic@gmail.com', '1234')),
+	(2, 'vukasinsta@gmail.com', fullhash('vukasinsta@gmail.com', '5678')),
+	(3, 'miljanrist@gmail.com', fullhash('miljanrist@gmail.com', '9012'))
 ;
 
 insert into currency(currency_code, currency_name) values
