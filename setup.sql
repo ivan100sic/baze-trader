@@ -77,7 +77,7 @@ create table trade (
 /*
 	Tabela koja cuva sve izvrsene transakcije odnosno promene stanja wallet-a
 */
-create table transactions (
+create table transaction (
 	transaction_id int primary key not null auto_increment,
 
 	wallet_id int not null,
@@ -85,6 +85,8 @@ create table transactions (
 
 	trade_id_home int,
 	trade_id_away int,
+
+	transaction_date datetime,
 
 	foreign key (wallet_id)
 		references wallet(wallet_id)
@@ -155,8 +157,10 @@ begin
 		where wallet_id = w_id;
 
 	/* insert u tabelu izvrsenih transakcija */
-	insert into transactions(wallet_id, transaction_delta, trade_id_home, trade_id_away)
-		values (w_id, delta, t_id_home, t_id_away);
+	insert into
+		transaction(wallet_id, transaction_delta, trade_id_home, trade_id_away, transaction_date)
+	values (w_id, delta, t_id_home, t_id_away, now());
+
 end //
 delimiter ;
 
@@ -192,12 +196,12 @@ begin
 
 	set w_avail = (select wallet_amount from wallet where wallet_id = new.wallet_id_from);
 
-	set new.trade_amount = new.trade_amount_start;
-
-	if new.trade_amount > w_avail
+	if new.trade_amount_start > w_avail
 	then
-		set new.trade_amount = w_avail;
+		set new.trade_amount_start = w_avail;
 	end if;
+
+	set new.trade_amount = new.trade_amount_start;
 
 	call credit_wallet(new.wallet_id_from, -new.trade_amount, new.trade_id, null);
 

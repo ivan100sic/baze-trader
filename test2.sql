@@ -51,24 +51,14 @@ insert into trade(trade_id, wallet_id_from, wallet_id_to, trade_amount_start, tr
 
 call trade_matcher(2);
 
-/* Miljan hoce da kupi dva obroka za 70 dinara, i tako roba nadje svog kupca */
+/* Miljan hoce da kupi tri obroka za 49 dinara, i tako roba nadje svog kupca */
 insert into trade(trade_id, wallet_id_from, wallet_id_to, trade_amount_start, trade_ratio, trade_created_date) values
-	(3, 6, 8, 150, 75.0, now());
+	(3, 6, 8, 3*49.0, 49.0, now());
 
 call trade_matcher(3);
-
-/* Stosic se povampirio i odlucio da hoce da ide u menzu za 100 rsd / obrok ceo zivot */
-insert into trade(trade_id, wallet_id_from, wallet_id_to, trade_amount_start, trade_ratio, trade_created_date) values
-	(4, 1, 9, 9999999, 100.0, now());
-
-call trade_matcher(4);
-
-/* Stosic se predomislio, otkazuje narudzbu */
-
-call cancel_trade(4);
 
 select * from user;
 select * from currency;
 select * from wallet;
-select * from transaction;
+select * from transactions;
 select * from trade;

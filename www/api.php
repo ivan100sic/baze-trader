@@ -82,7 +82,7 @@ if ($type == "get_api_key") {
 
 	api_key API kljuc korisnika
 
-	{status, ?[{wallet_id, wallet_name, currency_code, wallet_amount}]}
+	{status, ?wallets: [{wallet_id, wallet_name, currency_code, wallet_amount}]}
 */
 if ($type == "get_wallets") {
 	// auth
@@ -109,7 +109,7 @@ if ($type == "get_wallets") {
 /*
 	get_currencies Vraca sve dostupne valute
 
-	{status, [{currency_code, currency_name}]}
+	{status, currencies: [{currency_code, currency_name}]}
 */
 if ($type == "get_currencies") {
 	$currencies = SQL::get("select currency_code, currency_name from currency");
@@ -121,16 +121,480 @@ if ($type == "get_currencies") {
 }
 
 /*
+	new_wallet Kreira novi wallet za korisnika
+
+	api_key API kljuc korisnika
+	wallet_name Ime novog walleta
+	currency_code Valuta walleta
+
+	{status, ?wallet_id}
+*/
+if ($type == "new_wallet") {
+	// auth
+	$api_key = __get__("api_key");
+
+	$user_id = SQL::get("select user_id from user where
+		user_password = ?", [$api_key]);
+
+	$currency_code = SQL::get("select currency_code from currency
+		where currency_code = ?", [__get__("currency_code")]);
+
+	if (count($user_id) == 0) {
+		$result['status'] = 'authentication failed';
+	} else if (count($currency_code) == 0) {
+		$result['status'] = 'bad currency_code';
+	} else {
+		$user_id = $user_id[0]['user_id'];
+
+		$ok = SQL::run("insert into wallet(wallet_name, currency_code, wallet_amount,
+			user_id) values (?,?,0,?)", [
+
+			__get__("wallet_name"),
+			__get__("currency_code"),
+			$user_id
+
+		]);
+
+		if ($ok) {
+			$result = ["status" => "ok", "wallet_id" => SQL::last_insert_id()];
+		} else {
+			$result = ["status" => "failed"];
+		}
+	}
+
+	echo json_encode($result);
+	exit();
+}
+
+/*
+	update_password Menja sifru korisnika, ovo automatski menja i API kljuc
+
+	api_key API kljuc korisnika
+	new_user_password Nova sifra korisnika
+
+	{status, ?api_key}
+*/
+if ($type == "update_password") {
+	// auth
+	$user_id = SQL::get("select user_id from user where user_password = ?",
+		[__get__("api_key")]);
+
+	if (count($user_id) == 0) {
+		$result['status'] = 'authentication failed';
+	} else {
+		$user_id = $user_id[0]['user_id'];
+
+		$ok = SQL::run("update user set user_password = fullhash(user_email, ?)
+			where user_id = ?", [__get__('new_user_password'), $user_id]);
+
+		if ($ok) {
+			$result = [
+				'status' => 'ok',
+				'api_key' => SQL::get(
+					"select user_password from user where user_id = ?",
+					[$user_id]
+				)
+			];
+		} else {
+			$result['status'] = 'failed';
+		}
+	}
+
+	echo json_encode($result);
+	exit();
+}
+
+/*
+	get_trades_market Daje sve aktivne (>0) ponude na nekom marketu
+
+	currency_code_1 Valuta koja se kupuje
+	currency_code_2 Valuta kojom se placa
+
+	{status, ?buy: [{quantity, price}], ?sell: [{quantity, price}]}
+*/
+if ($type == "get_trades_market") {
+
+	$cc1 = __get__("currency_code_1");
+	$cc2 = __get__("currency_code_2");
+
+	if ($cc1 == $cc2) {
+		$result['status'] = 'bad currencies';
+	} else {
+		$q1 = SQL::get("select currency_code from currency where currency_code = ?",
+			[$cc1]);
+
+		$q2 = SQL::get("select currency_code from currency where currency_code = ?",
+			[$cc2]);
+
+		if (count($q1) == 0 || count($q2) == 0) {
+			$result['status'] = 'bad currencies';
+		} else {
+			$buy = SQL::get("
+				select
+					trade_amount / trade_ratio as quantity,
+					trade_ratio as price
+				from
+					trade, wallet as w1, wallet as w2
+				where
+					w1.wallet_id = wallet_id_from and
+					w2.wallet_id = wallet_id_to and
+					w1.currency_code = ? and
+					w2.currency_code = ? and
+					trade_amount > 0
+				order by
+					trade_ratio
+				", [$cc2, $cc1]);
+
+			$sell = SQL::get("
+				select
+					trade_amount as quantity,
+					1 / trade_ratio as price
+				from
+					trade, wallet as w1, wallet as w2
+				where
+					w1.wallet_id = wallet_id_from and
+					w2.wallet_id = wallet_id_to and
+					w1.currency_code = ? and
+					w2.currency_code = ? and
+					trade_amount > 0
+				order by
+					trade_ratio
+				", [$cc1, $cc2]);
+
+			$result = ['status' => 'ok', 'buy' => $buy, 'sell' => $sell];
+		}
+	}
+
+	echo json_encode($result);
+	exit();
+}
+
+/*
+	get_trades_user Daj sve ponude korisnika, uklj. i izvrsene. Quantity
+		je kolicina koju zelimo da kupimo (*_to) a price je cena, izrazena
+		u *from per *to
+
+	api_key API kljuc korisnika
+
+	{status, ?trades: [{trade_id, quantity, quantity_start, price,
+		wallet_id_from, wallet_id_to,
+		currency_code_from, currency_code_to, trade_created_date,
+		trade_completed_date, trade_cancelled_date}]}
+*/
+if ($type == "get_trades_user") {
+
+	// auth
+	$user_id = SQL::get("select user_id from user where user_password = ?",
+		[__get__("api_key")]);
+
+	if (count($user_id) == 0) {
+		$result['status'] = 'authentication failed';
+	} else {
+		$user_id = $user_id[0]['user_id'];
+		$data = SQL::get("
+			select
+				trade_id,
+				trade_amount / trade_ratio as quantity,
+				trade_ratio as price,
+				wallet_id_from,
+				wallet_id_to,
+				w1.currency_code as currency_code_from,
+				w2.currency_code as currency_code_to,
+				trade_created_date,
+				trade_completed_date,
+				trade_cancelled_date
+			from
+				trade, wallet as w1, wallet as w2
+			where
+				w1.wallet_id = wallet_id_from and
+				w2.wallet_id = wallet_id_to and
+				w1.user_id = ?
+			order by
+				w1.currency_code, w2.currency_code
+			", [$user_id]);
+
+		$result = ['status' => 'ok', 'trades' => $data];
+	}
+
+	echo json_encode($result);
+	exit();
+}
+
+/*
+	get_trades_user_market Daj sve ponude korisnika na odgovarajucem
+		marketu, ukljucujuci i izvrsene i otkazane.
+
+	api_key API kljuc korisnika
+	currency_code_1 Valuta koja se kupuje
+	currency_code_2 Valuta kojom se placa
+
+	{
+		status,
+		?buy: [{trade_id, quantity, quantity_start, price, wallet_id_from, wallet_id_to,
+			trade_created_date, trade_completed_date, trade_cancelled_date}],
+		?sell: [{trade_id, quantity, quantity_start, price, wallet_id_from, wallet_id_to,
+			trade_created_date, trade_completed_date, trade_cancelled_date}]
+	}
+*/
+if ($type == "get_trades_user_market") {
+
+	// auth
+	$user_id = SQL::get("select user_id from user where user_password = ?",
+		[__get__("api_key")]);
+
+	if (count($user_id) == 0) {
+		$result['status'] = 'authentication failed';
+	} else {
+		$user_id = $user_id[0]['user_id'];
+
+		$cc1 = __get__("currency_code_1");
+		$cc2 = __get__("currency_code_2");
+
+		if ($cc1 == $cc2) {
+			$result['status'] = 'bad currencies';
+		} else {
+			$q1 = SQL::get("select currency_code from currency where currency_code = ?",
+				[$cc1]);
+
+			$q2 = SQL::get("select currency_code from currency where currency_code = ?",
+				[$cc2]);
+
+			if (count($q1) == 0 || count($q2) == 0) {
+				$result['status'] = 'bad currencies';
+			} else {
+				$buy = SQL::get("
+					select
+						trade_id,
+						trade_amount / trade_ratio as quantity,
+						trade_amount_start / trade_ratio as quantity_start,
+						trade_ratio as price,
+						wallet_id_from,
+						wallet_id_to,
+						trade_created_date,
+						trade_completed_date,
+						trade_cancelled_date
+					from
+						trade, wallet as w1, wallet as w2
+					where
+						w1.wallet_id = wallet_id_from and
+						w2.wallet_id = wallet_id_to and
+						w1.currency_code = ? and
+						w2.currency_code = ? and
+						w1.user_id = ?
+					order by
+						trade_created_date desc
+					", [$cc2, $cc1, $user_id]);
+
+				$sell = SQL::get("
+					select
+						trade_id,
+						trade_amount as quantity,
+						trade_amount_start as quantity_start,
+						1 / trade_ratio as price,
+						wallet_id_from,
+						wallet_id_to,
+						trade_created_date,
+						trade_completed_date,
+						trade_cancelled_date
+					from
+						trade, wallet as w1, wallet as w2
+					where
+						w1.wallet_id = wallet_id_from and
+						w2.wallet_id = wallet_id_to and
+						w1.currency_code = ? and
+						w2.currency_code = ? and
+						w1.user_id = ?
+					order by
+						trade_created_date desc
+					", [$cc1, $cc2, $user_id]);
+
+				$result = ['status' => 'ok', 'buy' => $buy, 'sell' => $sell];
+			}
+		}
+	}
+
+	echo json_encode($result);
+	exit();
+}
+
+/*
+	new_trade Kreiraj novu ponudu i okaci je. Ukoliko korisnik
+		pokusa da potrosi vise nego sto ima, kolicina koju trosi
+		se izjednacava sa onom koju poseduje. Kolicina i cena
+		moraju biti pozitivni brojevi, inace se zahtev odbija.
+
+	api_key API kljuc korisnika
+	wallet_id_from Odakle se trosi novac
+	wallet_id_to Gde ce biti smesteno ono sto se kupuje
+	quantity Koliko nameravamo da kupimo
+	price Po kojoj ceni kupujemo
+
+	{status, ?trade_id}
+*/
+if ($type == "new_trade") {
+
+	// auth
+	$user_id = SQL::get("select user_id from user where user_password = ?",
+		[__get__("api_key")]);
+
+	if (count($user_id) == 0) {
+		$result['status'] = 'authentication failed';
+	} else {
+		$user_id = $user_id[0]['user_id'];
+		$wallet_id_from = __get__("wallet_id_from");
+		$wallet_id_to = __get__("wallet_id_to");
+
+		$trade_amount = floatval(__get__("quantity"));
+		$trade_ratio = floatval(__get__("price"));
+
+		$trade_amount *= $trade_ratio;
+
+		// verify wallet IDs
+		$w1 = SQL::get("select wallet_id, currency_code as cc from wallet where wallet_id = ?
+			and user_id = ?", [$wallet_id_from, $user_id]);
+
+		$w2 = SQL::get("select wallet_id, currency_code as cc from wallet where wallet_id = ?
+			and user_id = ?", [$wallet_id_to, $user_id]);
+
+		if (count($w1) == 0 || count($w2) == 0) {
+			$result['status'] = 'bad wallet_id';
+		} else if ($w1[0]['cc'] == $w2[0]['cc']) {
+			$result['status'] = 'wallets have the same currency';
+		} else {
+			$wallet_amount = SQL::get("select wallet_amount as wa from wallet where wallet_id
+				= ?", [$wallet_id_from]);
+
+			if ($wallet_amount[0]['wa'] <= 0) {
+				$result['status']  = 'wallet is empty';
+			} else if ($trade_amount <= 0) {
+				$result['status']  = 'quantity must be positive';
+			} else if ($trade_ratio <= 0) {
+				$result['status']  = 'price must be positive';
+			} else {
+				$ok = SQL::run("insert into trade(wallet_id_from, wallet_id_to, trade_amount_start,
+					trade_ratio, trade_created_date) values (?, ?, ?, ?, now())",
+					[$wallet_id_from, $wallet_id_to, $trade_amount, $trade_ratio]);
+				
+				if ($ok) {
+					$trade_id = SQL::last_insert_id();
+
+					$ok = SQL::run("call trade_matcher(?)", [$trade_id]);
+					
+					if ($ok) {
+						$result = ['status' => 'ok', 'trade_id' => $trade_id];
+					} else {
+						$result = ['status' => 'trade_matcher call failed, notify the admin'];
+					}
+				} else {
+					$result['status'] = 'failed';	
+				}
+			}
+		}
+	}
+
+	echo json_encode($result);
+	exit();
+}
+
+/*
+	cancel_trade Otkazi ponudu i refunduj korisnikov wallet. Ponuda ne
+		sme da bude prazna (amount > 0)
+
+	api_key API kljuc korisnika
+	trade_id ID ponude
+
+	{status}
+*/
+if ($type == "cancel_trade") {
+	// auth
+	$user_id = SQL::get("select user_id from user where user_password = ?",
+		[__get__("api_key")]);
+
+	if (count($user_id) == 0) {
+		$result['status'] = 'authentication failed';
+	} else {
+		$user_id = $user_id[0]['user_id'];
+
+		$trade_id = __get__("trade_id");
+
+		$ok = SQL::get("select trade_id, trade_amount as ta from trade, wallet
+			where trade_id = ? and wallet_id_from = wallet_id and user_id = ?",
+			[$trade_id, $user_id]);
+
+		if (count($ok) == 0) {
+			$result['status'] = 'bad trade_id';
+		} else if ($ok[0]['ta'] <= 0) {
+			$result['status'] = 'trade is empty';
+		} else {
+			$ok = SQL::run("call cancel_trade(?)", [$trade_id]);
+
+			if ($ok) {
+				$result['status'] = 'ok';
+			} else {
+				$result['status'] = 'unknown error in cancel_trade()';
+			}
+		}
+	}
+
+	echo json_encode($result);
+	exit();
+}
+
+/*
+	get_transactions_user Daj sve transakcije korisnika, zajedno sa tipom
+		transakcije
+
+	api_key API kljuc korisnika
+
+	{status, ?transactions: [transaction_id, wallet_id, currency_code,
+		transaction_delta, transaction_date, transaction_type]}
+*/
+if ($type == 'get_transactions_user') {
+	// auth
+	$user_id = SQL::get("select user_id from user where user_password = ?",
+		[__get__("api_key")]);
+
+	if (count($user_id) == 0) {
+		$result['status'] = 'authentication failed';
+	} else {
+		$user_id = $user_id[0]['user_id'];
+
+		$res = SQL::get("
+			select
+				transaction_id,
+				wallet.wallet_id as `wallet_id`,
+				currency_code,
+				transaction_delta,
+				transaction_date,
+				if (trade_id_home is null and trade_id_away is null,
+					'external transfer',
+					if (trade_id_home is not null and trade_id_away is not null,
+						'executed trade',
+						if (transaction_delta < 0,
+							'trade placed',
+							'trade cancelled'
+						)
+					)
+				) as transaction_type
+			from
+				transaction, wallet
+			where
+				transaction.wallet_id = wallet.wallet_id and
+				user_id = ?
+			order by
+				transaction_id desc", [$user_id]);
+
+		$result = ['status' => 'ok', 'transactions' => $res];
+	}
+
+	echo json_encode($result);
+	exit();
+}
+
+/*
 	TODO:
 
-	new_wallet
-	update_password
-	get_trades_market
-	get_trades_user
-	get_trades_user_market
-	new_trade
-	cancel_trade
-	get_transactions_user
+	wallet_transfer
 
 	SUPER:
 
