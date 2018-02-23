@@ -9,7 +9,7 @@ function __get__($id) {
 	return "";
 }
 
-$magic_key = "flawle3s3s3s3ecurity";
+$super_key = "flawle3s3s3s3ecurity";
 
 $type = __get__("type");
 
@@ -592,14 +592,160 @@ if ($type == 'get_transactions_user') {
 }
 
 /*
-	TODO:
+	wallet_transfer prebaci sa jednog na drugi wallet jednog korisnika,
+		ako su oni u istoj valuti. Vaze ista ogranicenja kao za postovanje
+		offera, kolicina mora da bude pozitivna i wallet ne sme da postane
+		negativan nakon transfera
 
-	wallet_transfer
+	api_key API kljuc korisnika
+	wallet_id_from Odakle se prebacuje
+	wallet_id_to Dokle se prebacuje
+	quantity Kolicina koja se prenosi
 
-	SUPER:
-
-	credit_wallet
-	get_users
-	get_trades
-	get_transactions
+	{status}
 */
+if ($type == 'wallet_transfer') {
+	// auth
+	$user_id = SQL::get("select user_id from user where user_password = ?",
+		[__get__("api_key")]);
+
+	if (count($user_id) == 0) {
+		$result['status'] = 'authentication failed';
+	} else {
+		$user_id = $user_id[0]['user_id'];
+		$amt = floatval(__get__('quantity'));
+
+		$w1 = SQL::get("select * from wallet
+			where wallet_id = ? and user_id = ?",
+			[__get__("wallet_id_from"), $user_id]);
+
+		$w2 = SQL::get("select * from wallet
+			where wallet_id = ? and user_id = ?",
+			[__get__("wallet_id_to"), $user_id]);
+
+		if (count($w1) == 0 || count($w2) == 0) {
+			$result['status'] = 'bad wallet ids';
+		} else if ($amt <= 0) {
+			$result['status'] = 'quantity must be positive';
+		} else if ($w1[0]['wallet_amount'] < $amt) {
+			$result['status'] = 'insufficient funds';
+		} else if ($w1[0]['currency_code'] != $w2[0]['currency_code']) {
+			$result['status'] = 'different currencies';
+		} else {
+			SQL::run('call credit_wallet(?, ?, null, null)', [$w1[0]['wallet_id'], -$amt]);
+			SQL::run('call credit_wallet(?, ?, null, null)', [$w2[0]['wallet_id'], $amt]);
+			$result['status'] = 'ok';
+		}
+	}
+
+	echo json_encode($result);
+	exit();
+}
+
+/*
+	super_credit_wallet Dodaj (ili oduzmi) kolicinu u neki wallet.
+		Posle izmene moguce je i da kolicina u walletu bude negativna
+
+	super_key Kljuc za super funkcije
+	wallet_id ID walleta koji se menja
+	quantity Za koliko se menja
+
+	{status}
+*/
+if ($type == 'super_credit_wallet') {
+	if ($super_key != __get__('super_key')) {
+		$result['status'] = 'authentication failed';
+	} else {
+		$wid = SQL::get('select wallet_id from wallet where wallet_id = ?',
+			[__get__('wallet_id')]);
+		$amt = floatval(__get__('quantity'));
+
+		if (count($wid) == 0) {
+			$result['status'] = 'bad wallet id';
+		} else {
+			SQL::run('call credit_wallet(?, ?, null, null)', [$wid[0]['wallet_id'], $amt]);
+			$result['status'] = 'ok';
+		}
+	}
+
+	echo json_encode($result);
+	exit();
+}
+
+/*
+	super_get_users Daj podatke o svim korisnicima
+
+	super_key Kljuc za super funkcije
+
+	{status, ?users: [{user_id, user_email, user_password}]}
+*/
+if ($type == 'super_get_users') {
+	if ($super_key != __get__('super_key')) {
+		$result['status'] = 'authentication failed';
+	} else {
+		$result = ['status' => 'ok', 'users' => SQL::get('select * from user', [])];
+	}
+
+	echo json_encode($result);
+	exit();
+}
+
+/*
+	super_get_wallets Daj podatke o svim walletima
+
+	super_key Kljuc za super funkcije
+
+	{status, ?wallets: [{wallet_id, user_id, currency_code, wallet_amount, wallet_name}]}
+*/
+if ($type == 'super_get_wallets') {
+	if ($super_key != __get__('super_key')) {
+		$result['status'] = 'authentication failed';
+	} else {
+		$result = ['status' => 'ok', 'wallets' => SQL::get('select * from wallet', [])];
+	}
+
+	echo json_encode($result);
+	exit();
+}
+
+/*
+	super_get_trades Daj podatke o svim ponudama. trade_amount je kolicina koju
+		podnosilac namerava da potrosi, a ne koju namerava da kupi.
+
+	super_key Kljuc za super funkcije
+
+	{status, ?trades: [{trade_id, wallet_id_from, wallet_id_to,
+		trade_amount_start, trade_amount, trade_ratio,
+		trade_created_date, trade_completed_date, trade_cancelled_date}]}
+*/
+if ($type == 'super_get_trades') {
+	if ($super_key != __get__('super_key')) {
+		$result['status'] = 'authentication failed';
+	} else {
+		$result = ['status' => 'ok', 'trades' => SQL::get('select * from trade', [])];
+	}
+
+	echo json_encode($result);
+	exit();
+}
+
+/*
+	super_get_transactions Daj podatke o svim transakcijama. trade_id_home i trade_id_away
+		su id-evi ponuda vezanih za tu transakciju. Ako su oba null, radi se o eksternom
+		transferu ili wallet transferu. Ako je jedno null, onda se radi o postavljanju ili
+		otkazivanju ponude. Ako su oba ne-null, radi se o delimicno ili potpuno izvrsenoj
+		trgovini.
+
+	{status, ?transactions: [transaction_id, wallet_id, transaction_delta, trade_id_home,
+		trade_id_away, transaction_date]}
+*/
+if ($type == 'super_get_transactions') {
+	if ($super_key != __get__('super_key')) {
+		$result['status'] = 'authentication failed';
+	} else {
+		$result = ['status' => 'ok', 'transactions' => SQL::get('select * from transaction', [])];
+	}
+
+	echo json_encode($result);
+	exit();
+}
