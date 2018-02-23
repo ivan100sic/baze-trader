@@ -9,6 +9,10 @@ function __get__($id) {
 	return "";
 }
 
+function json_encode_utf8($x) {
+	return json_encode ($x, JSON_UNESCAPED_UNICODE);
+}
+
 $super_key = "flawle3s3s3s3ecurity";
 
 $type = __get__("type");
@@ -40,7 +44,7 @@ if ($type == "new_user") {
 		$result['status'] = 'failed';
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -73,7 +77,7 @@ if ($type == "get_api_key") {
 		$result['api_key'] = $api_key[0]['pw'];
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -102,7 +106,7 @@ if ($type == "get_wallets") {
 		$result = ["status" => "ok", "wallets" => $wallets];
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -116,7 +120,7 @@ if ($type == "get_currencies") {
 
 	$result = ["status" => "ok", "currencies" => $currencies];
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -162,7 +166,7 @@ if ($type == "new_wallet") {
 		}
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -200,7 +204,7 @@ if ($type == "update_password") {
 		}
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -265,7 +269,7 @@ if ($type == "get_trades_market") {
 		}
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -316,7 +320,7 @@ if ($type == "get_trades_user") {
 		$result = ['status' => 'ok', 'trades' => $data];
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -413,7 +417,7 @@ if ($type == "get_trades_user_market") {
 		}
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -492,7 +496,7 @@ if ($type == "new_trade") {
 		}
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -536,7 +540,7 @@ if ($type == "cancel_trade") {
 		}
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -587,7 +591,7 @@ if ($type == 'get_transactions_user') {
 		$result = ['status' => 'ok', 'transactions' => $res];
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -638,7 +642,7 @@ if ($type == 'wallet_transfer') {
 		}
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -668,7 +672,7 @@ if ($type == 'super_credit_wallet') {
 		}
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -686,7 +690,7 @@ if ($type == 'super_get_users') {
 		$result = ['status' => 'ok', 'users' => SQL::get('select * from user', [])];
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -704,7 +708,7 @@ if ($type == 'super_get_wallets') {
 		$result = ['status' => 'ok', 'wallets' => SQL::get('select * from wallet', [])];
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -725,7 +729,7 @@ if ($type == 'super_get_trades') {
 		$result = ['status' => 'ok', 'trades' => SQL::get('select * from trade', [])];
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
 	exit();
 }
 
@@ -746,6 +750,42 @@ if ($type == 'super_get_transactions') {
 		$result = ['status' => 'ok', 'transactions' => SQL::get('select * from transaction', [])];
 	}
 
-	echo json_encode($result);
+	echo json_encode_utf8($result);
+	exit();
+}
+
+/*
+	super_new_currency Dodaj novu valutu.
+
+	super_key Kljuc za super funkcije
+	currency_code Kod valute, 1-3 karaktera
+	currency_name Ime valute
+
+	{status}
+*/
+if ($type == 'super_new_currency') {
+	if ($super_key != __get__('super_key')) {
+		$result['status'] = 'authentication failed';
+	} else {
+		$cc = __get__('currency_code');
+		$cn = __get__('currency_name');
+
+		if (strlen($cc) == 0) {
+			$result['status'] = 'empty currency code';
+		} else if (strlen($cn) == 0) {
+			$result['status'] = 'empty currency name';
+		}
+
+		$ok = SQL::run('insert into currency(currency_code, currency_name)
+			values (?, ?)', [$cc, $cn]);
+
+		if ($ok) {
+			$result['status'] = 'ok';
+		} else {
+			$result['status'] = 'failed';
+		}
+	}
+
+	echo json_encode_utf8($result);
 	exit();
 }

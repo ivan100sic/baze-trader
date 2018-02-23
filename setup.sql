@@ -1,5 +1,8 @@
 # neko ime koje nece da se poklapa ni sa cim drugim
-create database is43bt;
+create database is43bt
+	character set 'utf8'
+	collate 'utf8_general_ci'
+;
 use is43bt;
 
 /* tabela za korisnike, vrlo jednostavno */
