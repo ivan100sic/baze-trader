@@ -383,6 +383,5 @@ end //
 delimiter ;
 
 /* Useri i permisije */
-drop user 'trader'@'localhost';
 create user 'trader'@'localhost' identified by '0security';
 grant all privileges on is43bt.* to 'trader'@'localhost';
